@@ -1,0 +1,36 @@
+# EDM training config for MIMIC dataset
+setup:
+  CUDA_DEVICES: "0"
+  n_gpus_per_node: 1
+  n_nodes: 1
+  node_rank: 0
+  master_address: "127.0.0.1"
+  master_port: 29500
+  omp_n_threads: 4
+  runner: "train_dpdm_base"
+
+data:
+  dataset: "mimic"
+  path: "data/mimic/mimic_data.npy"           # 数据文件路径
+  train_indices: "data/mimic/train_indices.npy"  # 训练集索引
+  test_indices: "data/mimic/test_indices.npy"    # 测试集索引
+  batch_size: 128
+  num_workers: 4
+  dim: 1782                                     # 特征维度
+
+model:
+  sigma_min: 0.02
+  sigma_max: 80
+  rho: 7
+  n_steps: 32
+  architecture: "ncsnpp"
+  embedding_type: "fourier"
+
+training:
+  learning_rate: 0.0001
+  epochs: 100
+  save_every: 10
+  eval_every: 5
+  log_every: 100
+  checkpoint_dir: "checkpoints"
+  sample_dir: "samples"

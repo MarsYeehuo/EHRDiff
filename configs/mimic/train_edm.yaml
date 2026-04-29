@@ -1,0 +1,74 @@
+# 基于原始的 train_edm.yaml 修改
+setup:
+  runner: train_dpdm_base
+  CUDA_DEVICES: 0
+  n_gpus_per_node: 1
+  n_nodes: 1
+  node_rank: 0
+  master_address: '127.0.0.1'
+  master_port: 29500  # 修改端口，避免冲突
+  omp_n_threads: 8    # 根据您的 CPU 调整，64 可能太大
+
+data:
+  path: "data/mimic/mimic_data.npy"  # 修改为您的数据路径
+  name: mimic
+  resolution: 1034
+  dataloader_params:
+    num_workers: 1
+  n_classes: None
+  # 添加训练/测试索引路径（如果需要）
+  train_indices: "data/mimic/train_indices.npy"
+  test_indices: "data/mimic/test_indices.npy"
+
+model:
+  denoiser_name: edm
+  denoiser_network: song
+  ema_rate: .999
+  params:
+    sigma_data: 0.14
+    sigma_min: .02
+    sigma_max: 80.
+  network:
+    z_dim: 1034
+    time_dim: 384
+    unit_dims: [1782, 1024, 1024, 1024, 1782]
+    use_cfg: False
+
+optim:
+  optimizer: AdamW
+  params:
+    lr: 3e-4
+    weight_decay: 0.
+
+sampler:
+  solver: 'heun'
+  discretization: 'edm'
+  stochastic: False
+  num_steps: 32
+  sigma_min: .02
+  sigma_max: 80.
+  rho: 7.
+  guid_scale: None
+
+train:
+  seed: 2023
+  batch_size: 512  # 如果内存不足，可以减小
+  warmup_steps: 20000
+  n_epochs: 5000
+  check_freq: 5000
+  save_freq: 20000
+  # 添加这些参数，以防代码需要
+  learning_rate: 3e-4
+  save_every: 5000
+  eval_every: 5000
+  log_every: 100
+
+loss:
+  version: edm
+  p_mean: -1.2
+  p_std: 1.2
+  sigma_data: 0.14
+  n_classes: None
+
+dp:
+  do: False

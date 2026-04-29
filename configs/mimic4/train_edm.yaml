@@ -1,0 +1,72 @@
+setup:
+  runner: train_dpdm_base
+  CUDA_DEVICES: 0
+  n_gpus_per_node: 1
+  n_nodes: 1
+  node_rank: 0
+  master_address: '127.0.0.1'
+  master_port: 29500
+  omp_n_threads: 4
+
+data:
+  path: "data/mimic4/mimic4_data.npy"
+  name: mimic4
+  resolution: 2241  # 或根据实际维度调整
+  dataloader_params:
+    num_workers: 1
+  n_classes: None
+  train_indices: "data/mimic4/train_indices.npy"
+  test_indices: "data/mimic4/test_indices.npy"
+
+model:
+  denoiser_name: edm
+  denoiser_network: song
+  ema_rate: .999
+  params:
+    sigma_data: 0.14
+    sigma_min: .02
+    sigma_max: 80.
+  network:
+    z_dim: 2241  # 必须与数据维度匹配
+    time_dim: 384
+    unit_dims: [2241, 1024, 1024, 1024, 2241]
+    use_cfg: False
+
+optim:
+  optimizer: AdamW
+  params:
+    lr: 3e-4
+    weight_decay: 0.
+
+sampler:
+  solver: 'heun'
+  discretization: 'edm'
+  stochastic: False
+  num_steps: 32
+  sigma_min: .02
+  sigma_max: 80.
+  rho: 7.
+  guid_scale: None
+
+train:
+  seed: 2023
+  batch_size: 64
+  warmup_steps: 20000
+  n_epochs: 5000
+  check_freq: 5000
+  save_freq: 20000
+  learning_rate: 3e-4
+  progress_bar:
+    enabled: true
+    style: "tqdm"
+    refresh_rate: 10
+
+loss:
+  version: edm
+  p_mean: -1.2
+  p_std: 1.2
+  sigma_data: 0.14
+  n_classes: None
+
+dp:
+  do: False
