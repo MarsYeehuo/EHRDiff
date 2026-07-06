@@ -4,6 +4,7 @@ import torch
 import numpy as np
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel
+from torch.cuda.amp import autocast, GradScaler
 
 from model.linear_model import LinearModel
 from utils.util import set_seeds, make_dir, save_checkpoint, sample_random_batch, plot_dim_dist
@@ -249,6 +250,7 @@ def training(config, workdir, mode):
 
 
         else: # with No Differential Private training
+            scaler = GradScaler()
             # 创建epoch进度条
             pbar = tqdm(
                 enumerate(dataset_loader),
@@ -282,9 +284,11 @@ def training(config, workdir, mode):
                         y = y.long()
 
                 optimizer.zero_grad(set_to_none=True)
-                loss = torch.mean(loss_fn(model, x, y))
-                loss.backward()
-                optimizer.step()
+                with autocast():
+                    loss = torch.mean(loss_fn(model, x, y))
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
                 scheduler.step()
                 
                 # 更新统计
