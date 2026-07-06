@@ -134,7 +134,8 @@ def training(config, workdir, mode):
 
     dataset = EHRDataset(raw_data, labels)
     dataset_loader = torch.utils.data.DataLoader(
-        dataset=dataset, shuffle=True, batch_size=config.train.batch_size)
+        dataset=dataset, shuffle=True, batch_size=config.train.batch_size,
+        pin_memory=True, num_workers=config.data.dataloader_params.get('num_workers', 1))
 
     if config.dp.do:
         privacy_engine = PrivacyEngine()
@@ -250,36 +251,36 @@ def training(config, workdir, mode):
 
 
         else: # with No Differential Private training
+            # 一次性预加载全部数据到 GPU，消除每 batch 的 CPU→GPU 传输开销
+            gpu_data = torch.from_numpy(raw_data).to(config.setup.device).to(torch.float32)
+            n_gpu = gpu_data.shape[0]
+            bsz = config.train.batch_size
             scaler = GradScaler()
-            # 创建epoch进度条
+
+            # 每 epoch 随机打乱索引
+            perm = torch.randperm(n_gpu, device=config.setup.device)
+
             pbar = tqdm(
-                enumerate(dataset_loader),
-                total=len(dataset_loader),
+                range(0, n_gpu, bsz),
                 desc=f'Epoch {epoch+1}/{config.train.n_epochs}',
                 ncols=120,
                 bar_format='{l_bar}{bar:30}{r_bar}{bar:-30b}',
                 position=0,
                 leave=True
             )
-            
             epoch_loss = 0.0
             epoch_start_time = time.time()
-            
-            for batch_idx, (train) in pbar:
-                
-                if isinstance(train, list):
-                    train_x = train[0]
-                    train_y = train[1]
-                else:
-                    train_x = train
-                    train_y = None
+            batch_idx = 0
 
-                x = train_x.to(config.setup.device).to(torch.float32)
+            for start in pbar:
+                end = min(start + bsz, n_gpu)
+                indices = perm[start:end]
+                x = gpu_data[indices]
 
                 if config.data.n_classes is None:
                     y = None
                 else:
-                    y = train_y.to(config.setup.device)
+                    y = train_y[indices]
                     if y.dtype == torch.float32:
                         y = y.long()
 
@@ -290,16 +291,17 @@ def training(config, workdir, mode):
                 scaler.step(optimizer)
                 scaler.update()
                 scheduler.step()
-                
+
                 # 更新统计
                 current_loss = loss.item()
                 epoch_loss += current_loss
-                
+                batch_idx += 1
+
                 # 计算平均损失和速度
-                avg_loss = epoch_loss / (batch_idx + 1)
+                avg_loss = epoch_loss / batch_idx
                 elapsed_time = time.time() - epoch_start_time
-                speed = (batch_idx + 1) * config.train.batch_size / elapsed_time if elapsed_time > 0 else 0
-                
+                speed = batch_idx * bsz / elapsed_time if elapsed_time > 0 else 0
+
                 # 更新进度条
                 pbar.set_postfix({
                     'loss': f'{current_loss:.4f}',
@@ -314,7 +316,7 @@ def training(config, workdir, mode):
                         ema.store(model.parameters())
                         ema.copy_to(model.parameters())
                         if config.setup.local_rank == 0:
-                            sample_random_batch(EHR_task, snapshot_sampling_shape, sampler, 
+                            sample_random_batch(EHR_task, snapshot_sampling_shape, sampler,
                                                     sample_dir, config.setup.device, config.data.n_classes)
                         torch.cuda.empty_cache()
                         ema.restore(model.parameters())
@@ -323,7 +325,7 @@ def training(config, workdir, mode):
                     logging.info('[%d, %5d] Loss: %.10f' % (epoch+1, state['step'] + 1, loss))
                     syn_data = np.load(sample_dir + '/sample.npy')
                     corr, nzc = plot_dim_dist(raw_data, syn_data, workdir)
-                    logging.info('corr: %.4f, none-zero columns: %d'%(corr, nzc)) 
+                    logging.info('corr: %.4f, none-zero columns: %d'%(corr, nzc))
                 dist.barrier()
 
                 if state['step'] % config.train.save_freq == 0 and state['step'] >= config.train.save_freq and config.setup.local_rank == 0:
@@ -337,18 +339,20 @@ def training(config, workdir, mode):
 
                 state['step'] += 1
                 state['ema'].update(model.parameters())
-            
+
             # 关闭进度条
             pbar.close()
-            
+
             # 打印epoch总结
             if config.setup.local_rank == 0:
                 epoch_time = time.time() - epoch_start_time
+                n_batches = (n_gpu + bsz - 1) // bsz
+                avg_loss_epoch = epoch_loss / n_batches
                 logging.info(
                     f'Epoch {epoch+1} completed | '
-                    f'Avg Loss: {epoch_loss/len(dataset_loader):.4f} | '
+                    f'Avg Loss: {avg_loss_epoch:.4f} | '
                     f'Time: {epoch_time:.1f}s | '
-                    f'Speed: {len(dataset_loader)*config.train.batch_size/epoch_time:.1f} samples/s'
+                    f'Speed: {n_gpu/epoch_time:.1f} samples/s'
                 )
 
         
