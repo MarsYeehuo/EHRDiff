@@ -11,7 +11,7 @@ setup:
 data:
   path: "data/mimic4/mimic4_data.npy"
   name: mimic4
-  resolution: 2241  # 或根据实际维度调整
+  resolution: 2083  # 必须与实际数据维度一致
   dataloader_params:
     num_workers: 1
   n_classes: None
@@ -27,9 +27,9 @@ model:
     sigma_min: .02
     sigma_max: 80.
   network:
-    z_dim: 2241  # 必须与数据维度匹配
+    z_dim: 2083  # 必须与数据维度匹配
     time_dim: 384
-    unit_dims: [2241, 1024, 1024, 1024, 2241]
+    unit_dims: [2083, 1024, 1024, 1024, 2083]
     use_cfg: False
 
 optim:
