@@ -1,11 +1,18 @@
-    venv/
-    __pycache__/
-    *.pyc
-    .DS_Store
-    .vscode/
-    .idea/
-    .env
-    *.log
-    data/
-    results/
-    .pth
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+.vscode/
+.idea/
+.env
+*.log
+data/
+results/
+*.pth
+*.png
+*.jpg
+*.pdf
+.claude/
+*.egg-info/
+.pytest_cache/
+*.ipynb_checkpoints/
