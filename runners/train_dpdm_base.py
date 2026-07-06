@@ -179,7 +179,7 @@ def training(config, workdir, mode):
 
 
     # snapshot_sampling_shape = (config.sampler.snapshot_batch_size, config.data.resolution)
-    snapshot_sampling_shape = (raw_data.shape[0], config.data.resolution)
+    snapshot_sampling_shape = (min(raw_data.shape[0], 10000), config.data.resolution)
     if config.data.n_classes == 'None':
         config.data.n_classes = None
 
