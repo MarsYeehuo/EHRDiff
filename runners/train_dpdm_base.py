@@ -97,13 +97,32 @@ def training(config, workdir, mode):
 
     state = dict(model=model, ema=ema, optimizer=optimizer, step=0)
 
+    # 断点续训：检查是否存在 final_checkpoint
+    resume_ckpt = os.path.join(checkpoint_dir, 'final_checkpoint.pth')
+    resumed = False
+    if os.path.exists(resume_ckpt):
+        saved = torch.load(resume_ckpt, map_location=config.setup.device)
+        state['model'].load_state_dict(saved['model'])
+        state['ema'].load_state_dict(saved['ema'])
+        state['optimizer'].load_state_dict(saved['optimizer'])
+        state['step'] = saved['step']
+        del saved
+        if not config.dp.do:
+            for _ in range(state['step']):
+                scheduler.step()
+        resumed = True
+        torch.cuda.empty_cache()
+
     if config.setup.global_rank == 0:
         model_parameters = filter(
             lambda p: p.requires_grad, model.parameters())
         n_params = sum([np.prod(p.size()) for p in model_parameters])
         logging.info('Number of trainable parameters in model: %d' % n_params)
         logging.info('Number of total epochs: %d' % config.train.n_epochs)
-        logging.info('Starting training at step %d' % state['step'])
+        if resumed:
+            logging.info('Resumed from checkpoint at step %d' % state['step'])
+        else:
+            logging.info('Starting training at step %d' % state['step'])
     dist.barrier()
         
     if config.data.name.startswith('mimic'):
@@ -332,6 +351,8 @@ def training(config, workdir, mode):
                     checkpoint_file = os.path.join(
                         checkpoint_dir, 'checkpoint_%d.pth' % state['step'])
                     save_checkpoint(checkpoint_file, state)
+                    # 同步保存 final_checkpoint 用于断点续训
+                    save_checkpoint(resume_ckpt, state)
                     logging.info(
                         'Saving checkpoint at iteration %d' % state['step'])
                     logging.info('--------------------------------------------')
