@@ -51,6 +51,6 @@ sampler:
 test:
   type: 'binary'
   labels: None
-  batch_size: 10000
-  n_samples: 10000
+  batch_size: 45395
+  n_samples: 45395
   seed: 2023
