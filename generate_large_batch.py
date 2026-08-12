@@ -33,7 +33,11 @@ def load_model(config, device):
         model=LinearModel(**config.model.network).to(device),
         **config.model.params)
     state = torch.load(config.model.ckpt, map_location=device)
-    model.load_state_dict(state['model'], strict=True)
+    sd = state['model']
+    if any(k.startswith('module.') for k in sd):
+        # checkpoint 由 DDP/DataParallel 包装的模型保存，剥离 'module.' 前缀
+        sd = {k[len('module.'):]: v for k, v in sd.items()}
+    model.load_state_dict(sd, strict=True)
     if config.model.use_ema:
         ema = ExponentialMovingAverage(model.parameters(), decay=config.model.ema_rate)
         ema.load_state_dict(state['ema'])
