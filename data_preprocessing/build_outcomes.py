@@ -127,7 +127,7 @@ def build_outcomes(data_dir, hadm_order, readmit_days=30):
     # 按 subject 计算再入院：按 admittime 排序，找下一条在出院 30 天内的入院
     adm_sorted = adm.sort_values(['subject_id', 'admittime'])
     next_time = adm_sorted.groupby('subject_id')['admittime'].shift(-1)
-    next_type = adm_sorted.groupby('subject_id')['admitt_type'].shift(-1)
+    next_type = adm_sorted.groupby('subject_id')['admission_type'].shift(-1)
     disch = adm_sorted['dischtime']
     days_to_next = (next_time - disch).dt.total_seconds() / 86400.0
     # 非计划 = 下一条为急诊/观察入院（MIMIC-IV 中 EMERGENCY 为主要非计划类型）
