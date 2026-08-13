@@ -34,6 +34,10 @@ def main():
     parser.add_argument('--test_idx', default='data/mimic4/test_indices.npy')
     parser.add_argument('--n_code', type=int, default=2083,
                         help='取前 N 列作 ICD 特征（人口统计模型为 2083）')
+    parser.add_argument('--max_syn', type=int, default=None,
+                        help='合成样本截取条数。做公平对比时设为与另一模型相同'
+                             '（NZC 对样本量极敏感，10k vs 100k 不可比）')
+    parser.add_argument('--seed', type=int, default=2023)
     parser.add_argument('--out', default=None, help='JSON 输出路径（可选）')
     opt = parser.parse_args()
 
@@ -45,6 +49,9 @@ def main():
     if syn.ndim == 3:
         syn = syn.squeeze(0)
     syn = syn[:, :opt.n_code].astype(np.float32)
+    if opt.max_syn and len(syn) > opt.max_syn:
+        rng = np.random.default_rng(opt.seed)
+        syn = syn[rng.choice(len(syn), opt.max_syn, replace=False)]
 
     print(f'  real (test): {real.shape}')
     print(f'  synthetic  : {syn.shape}')
