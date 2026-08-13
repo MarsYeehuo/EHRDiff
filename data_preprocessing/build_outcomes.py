@@ -36,6 +36,18 @@ def process_icd_code(code):
 
 def rebuild_hadm_order(data_dir):
     """重建 (hadm_id 排序, hadm->codes)。返回 None 若文件缺失。"""
+    for f in ('diagnoses_icd.csv', 'admissions.csv'):
+        p = os.path.join(data_dir, f)
+        if not os.path.exists(p):
+            listing = os.listdir(data_dir) if os.path.isdir(data_dir) else '<dir not found>'
+            raise SystemExit(
+                f'找不到原始文件: {p}\n'
+                f'data_dir 内容: {listing}\n\n'
+                '说明: 服务器上可能只有处理后的 npy，没有原始 MIMIC-IV CSV。\n'
+                '两个选择:\n'
+                '  1) 用 --raw_dir 指向原始 CSV 所在目录（若在别处）\n'
+                '  2) 从本地 data/mimic4/ 上传 admissions.csv / diagnoses_icd.csv / '
+                'procedures_icd.csv 到服务器（它们是重建 hadm 映射和提取结局的必需输入）')
     diagnoses = pd.read_csv(
         os.path.join(data_dir, 'diagnoses_icd.csv'),
         dtype={'subject_id': str, 'hadm_id': str, 'icd_code': str,
@@ -150,12 +162,17 @@ def build_outcomes(data_dir, hadm_order, readmit_days=30):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data_dir', default='data/mimic4')
+    parser.add_argument('--data_dir', default='data/mimic4',
+                        help='处理后的 npy 数据目录')
+    parser.add_argument('--raw_dir', default=None,
+                        help='原始 MIMIC-IV CSV 目录（admissions/diagnoses/procedures），'
+                             '默认同 --data_dir')
     parser.add_argument('--readmit_days', type=int, default=30)
     opt = parser.parse_args()
 
+    raw_dir = opt.raw_dir or opt.data_dir
     print('[1] 重建 hadm_id 顺序...')
-    hadm_to_codes, uniq = rebuild_hadm_order(opt.data_dir)
+    hadm_to_codes, uniq = rebuild_hadm_order(raw_dir)
     n_samples = len(uniq)
     print(f'  有代码的住院记录: {n_samples}')
 
@@ -166,7 +183,7 @@ def main():
     hadm_order = verify_mapping(opt.data_dir, hadm_to_codes, codes, n_samples)
 
     print('[3] 提取临床结局...')
-    outcomes = build_outcomes(opt.data_dir, hadm_order, opt.readmit_days)
+    outcomes = build_outcomes(raw_dir, hadm_order, opt.readmit_days)
 
     np.save(os.path.join(opt.data_dir, 'hadm_ids.npy'),
             np.array(hadm_order, dtype=object))
