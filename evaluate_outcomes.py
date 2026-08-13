@@ -5,9 +5,14 @@
     outcomes.npy  (n, 3): 列0 mortality, 列1 LOS天数, 列2 readmit30
 
 方法（Train-on-Synthetic, Test-on-Real）：
-    对每个结局，分别用 真实训练集 和 合成数据 的特征训练分类器，
-    在 真实测试集 上评估 AUROC / AvgPrec，报告保留率及 bootstrap 置信区间。
-    这检验合成 ICD 画像是否保留 ICD→结局 的关联。
+    合成数据只生成 ICD 代码、不含结局标签，因此"在合成数据上训练"采用
+    pseudo-labeling：先用真实训练集训练一个 teacher 模型，用它为每条合成
+    样本预测结局概率并依概率采样伪标签，再用 (合成特征, 伪标签) 训练
+    student 模型，最后在真实测试集上评估 AUROC。若合成 ICD 画像保留了
+    ICD→结局 的关联，student 的性能应接近直接在真实数据上训练的模型。
+
+    对每个结局，报告 real/syn AUROC、AvgPrec 及保留率，并用 bootstrap
+    重采样真实测试集得到 95% 置信区间。
 
 用法（服务器）：
     python evaluate_outcomes.py \
@@ -38,7 +43,7 @@ OUTCOME_NAMES = ['mortality', 'prolonged_stay', 'readmit30']
 
 
 def load_data(data_path, train_idx_path, test_idx_path, outcomes_path, syn_path,
-              max_syn=200000, los_quantile=0.5):
+              max_syn=200000):
     real_all = np.load(data_path, mmap_mode='r')
     train_idx = np.load(train_idx_path)
     test_idx = np.load(test_idx_path)
@@ -78,22 +83,33 @@ def load_data(data_path, train_idx_path, test_idx_path, outcomes_path, syn_path,
     return real_train, real_test, syn, ys, train_idx, test_idx
 
 
-def fit_predict(clf_name, X, y, X_test):
+def make_clf(clf_name):
     if clf_name == 'lightgbm' and LGBMClassifier is not None:
-        clf = LGBMClassifier(n_estimators=200, max_depth=5, learning_rate=0.1,
-                             random_state=42, verbose=-1, n_jobs=-1)
-    else:
-        clf = LogisticRegression(max_iter=1000, solver='lbfgs', n_jobs=-1)
-    # 丢弃 NaN 标签行
+        return LGBMClassifier(n_estimators=200, max_depth=5, learning_rate=0.1,
+                              random_state=42, verbose=-1, n_jobs=-1)
+    return LogisticRegression(max_iter=1000, solver='lbfgs', n_jobs=-1)
+
+
+def fit_clf(clf_name, X, y):
+    """训练分类器，丢弃 NaN 标签行。"""
     valid = ~np.isnan(y)
+    clf = make_clf(clf_name)
     clf.fit(X[valid], y[valid])
-    return clf.predict_proba(X_test)[:, 1]
+    return clf
 
 
-def evaluate_task(X_tr, y_tr, X_te, y_te, clf_name):
-    p = fit_predict(clf_name, X_tr, y_tr, X_te)
-    valid = ~np.isnan(y_te)
-    return p[valid], y_te[valid]
+def fit_pseudo(clf_name, X_syn, y_tr, X_real, seed):
+    """Teacher on real -> pseudo-label synthetic -> student on synthetic.
+
+    返回在 X_syn 上训练的 student 分类器。伪标签由 teacher 对每条合成
+    样本的结局概率依 Bernoulli 采样得到，使 (X_syn, y_syn) 保留真实的
+    P(y|X) 结构，而不是把合成特征与任意真实标签硬配对。
+    """
+    teacher = fit_clf(clf_name, X_real, y_tr)
+    p = teacher.predict_proba(X_syn)[:, 1]
+    rng = np.random.default_rng(seed)
+    y_syn = (rng.uniform(size=len(X_syn)) < p).astype(np.float32)
+    return fit_clf(clf_name, X_syn, y_syn)
 
 
 def main():
@@ -125,8 +141,13 @@ def main():
             continue
 
         print(f'\n[{name}] ({opt.clf})')
-        p_r, yv = evaluate_task(real_train, y_tr, real_test, y_te, opt.clf)
-        p_s, _ = evaluate_task(syn, y_tr, real_test, y_te, opt.clf)
+        clf_r = fit_clf(opt.clf, real_train, y_tr)
+        p_r = clf_r.predict_proba(real_test)[:, 1]
+        clf_s = fit_pseudo(opt.clf, syn, y_tr, real_train, seed=opt.seed)
+        p_s = clf_s.predict_proba(real_test)[:, 1]
+
+        yv = y_te[te_valid]
+        p_r, p_s = p_r[te_valid], p_s[te_valid]
         auc_r = roc_auc_score(yv, p_r)
         auc_s = roc_auc_score(yv, p_s)
         ap_r = average_precision_score(yv, p_r)
