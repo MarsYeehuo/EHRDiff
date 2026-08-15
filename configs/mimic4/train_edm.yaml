@@ -6,14 +6,14 @@ setup:
   node_rank: 0
   master_address: '127.0.0.1'
   master_port: 29500
-  omp_n_threads: 4
+  omp_n_threads: 8
 
 data:
   path: "data/mimic4/mimic4_data.npy"
   name: mimic4
   resolution: 2083  # 必须与实际数据维度一致
   dataloader_params:
-    num_workers: 1
+    num_workers: 8
   n_classes: None
   train_indices: "data/mimic4/train_indices.npy"
   test_indices: "data/mimic4/test_indices.npy"
@@ -52,7 +52,7 @@ train:
   seed: 2023
   batch_size: 1024
   warmup_steps: 20000
-  n_epochs: 2000
+  n_epochs: 5000
   check_freq: 5000
   save_freq: 5000
   learning_rate: 3e-4
