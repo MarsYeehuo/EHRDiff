@@ -50,9 +50,9 @@ sampler:
 
 train:
   seed: 2023
-  batch_size: 64
+  batch_size: 1024
   warmup_steps: 20000
-  n_epochs: 5000
+  n_epochs: 2000
   check_freq: 5000
   save_freq: 5000
   learning_rate: 3e-4
