@@ -34,7 +34,7 @@ import warnings
 
 import numpy as np
 from scipy.stats import t as tdist
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import average_precision_score, roc_auc_score
 from sklearn.linear_model import LogisticRegression
 from lightgbm import LGBMClassifier
 
@@ -181,7 +181,8 @@ def main():
     # ---- repeated evaluation with bootstrap of the real test set ----
     # per-task results over reps: auc_real[rep], auc_syn[rep]
     n_te = real_test.shape[0]
-    per_task = {i: {'auc_real': [], 'auc_syn': []} for i in range(len(tasks))}
+    per_task = {i: {'auc_real': [], 'auc_syn': [], 'ap_real': [], 'ap_syn': []}
+                for i in range(len(tasks))}
 
     for rep in range(K):
         rng = np.random.default_rng(2023 + rep * 7)
@@ -189,17 +190,21 @@ def main():
         for i, t in enumerate(tasks):
             if protocol == 'logistic':
                 p_r, p_s = cache[i]
-                auc_r = roc_auc_score(t['y_te'][idx], p_r[idx])
-                auc_s = roc_auc_score(t['y_te'][idx], p_s[idx])
+                p_r, p_s = p_r[idx], p_s[idx]
             else:
                 clf_r = fit_lightgbm(t['X_tr_real'], t['y_tr'], rep)
                 clf_s = fit_lightgbm(t['X_tr_syn'], t['y_tr_syn'], rep)
-                auc_r = roc_auc_score(
-                    t['y_te'][idx], clf_r.predict_proba(t['X_te_real'][idx])[:, 1])
-                auc_s = roc_auc_score(
-                    t['y_te'][idx], clf_s.predict_proba(t['X_te_syn'][idx])[:, 1])
+                p_r = clf_r.predict_proba(t['X_te_real'][idx])[:, 1]
+                p_s = clf_s.predict_proba(t['X_te_syn'][idx])[:, 1]
+            y = t['y_te'][idx]
+            auc_r = roc_auc_score(y, p_r)
+            auc_s = roc_auc_score(y, p_s)
+            ap_r = average_precision_score(y, p_r)
+            ap_s = average_precision_score(y, p_s)
             per_task[i]['auc_real'].append(auc_r)
             per_task[i]['auc_syn'].append(auc_s)
+            per_task[i]['ap_real'].append(ap_r)
+            per_task[i]['ap_syn'].append(ap_s)
         if protocol == 'lightgbm':
             print(f'  rep {rep+1}/{K} done')
 
@@ -208,13 +213,18 @@ def main():
     for i, t in enumerate(tasks):
         ar = np.array(per_task[i]['auc_real'])
         asy = np.array(per_task[i]['auc_syn'])
+        apr = np.array(per_task[i]['ap_real'])
+        aps = np.array(per_task[i]['ap_syn'])
         retention = asy / ar
+        ap_retention = aps / apr
         rows.append({
             'task': t['name'], 'code': t['code'],
             'auc_real_mean': float(ar.mean()), 'auc_real_sd': float(ar.std(ddof=1)),
             'auc_syn_mean': float(asy.mean()), 'auc_syn_sd': float(asy.std(ddof=1)),
+            'ap_real_mean': float(apr.mean()), 'ap_syn_mean': float(aps.mean()),
             'retention_mean': float(retention.mean()),
             'retention_sd': float(retention.std(ddof=1)),
+            'ap_retention_mean': float(ap_retention.mean()),
             'prevalence': float(t['y_tr'].mean()),
         })
 
@@ -225,49 +235,62 @@ def main():
         tcrit = tdist.ppf(0.975, len(v) - 1)
         return v.mean(), sd, se, tcrit * se
 
-    print('\n  per-task AUROC mean +/- SD over %d reps:' % K)
-    print(f"  {'task':<22} {'prevalence':>9} {'AUC_real':>16} {'AUC_syn':>16} {'retention':>12}")
+    print('\n  per-task AUROC / AP mean +/- SD over %d reps:' % K)
+    print(f"  {'task':<22} {'prevalence':>9} {'AUC_real':>16} {'AUC_syn':>16} "
+          f"{'retention':>12} {'AP_real':>12} {'AP_syn':>12} {'AP_ret':>10}")
     for r in rows:
         print(f"  {r['task']:<22} {r['prevalence']:>9.3f} "
               f"{r['auc_real_mean']:>10.4f}±{r['auc_real_sd']:.4f} "
               f"{r['auc_syn_mean']:>10.4f}±{r['auc_syn_sd']:.4f} "
-              f"{r['retention_mean']:>10.4f}±{r['retention_sd']:.4f}")
+              f"{r['retention_mean']:>10.4f}±{r['retention_sd']:.4f} "
+              f"{r['ap_real_mean']:>10.4f} {r['ap_syn_mean']:>10.4f} "
+              f"{100*r['ap_retention_mean']:>9.2f}")
 
     # aggregate retention (mean over tasks of per-rep retention)
     n_tasks = len(tasks)
     agg_ret_rep = np.zeros(K)
+    agg_ap_ret_rep = np.zeros(K)
     agg_auc_r_rep = np.zeros(K)
     agg_auc_s_rep = np.zeros(K)
     for rep in range(K):
-        rs, ars, ass = [], [], []
+        rs, prs, ars, ass = [], [], [], []
         for i in range(n_tasks):
             ars.append(per_task[i]['auc_real'][rep])
             ass.append(per_task[i]['auc_syn'][rep])
             rs.append(per_task[i]['auc_syn'][rep] / per_task[i]['auc_real'][rep])
+            prs.append(per_task[i]['ap_syn'][rep] / per_task[i]['ap_real'][rep])
         agg_ret_rep[rep] = np.mean(rs)
+        agg_ap_ret_rep[rep] = np.mean(prs)
         agg_auc_r_rep[rep] = np.mean(ars)
         agg_auc_s_rep[rep] = np.mean(ass)
 
     m_r, sd_r, se_r, ci_r = agg_ci(agg_auc_r_rep)
     m_s, sd_s, se_s, ci_s = agg_ci(agg_auc_s_rep)
     m_t, sd_t, se_t, ci_t = agg_ci(agg_ret_rep)
+    m_p, sd_p, se_p, ci_p = agg_ci(agg_ap_ret_rep)
     print('\n  Aggregate over %d tasks (mean of per-rep values):' % n_tasks)
     print(f'  AUROC real : {m_r:.4f} +/- {sd_r:.4f} (95% CI {m_r-ci_r:.4f}..{m_r+ci_r:.4f})')
     print(f'  AUROC syn  : {m_s:.4f} +/- {sd_s:.4f} (95% CI {m_s-ci_s:.4f}..{m_s+ci_s:.4f})')
     print(f'  Retention  : {100*m_t:.2f}% +/- {100*sd_t:.2f}pp '
           f'(95% CI {100*(m_t-ci_t):.2f}..{100*(m_t+ci_t):.2f}%)')
+    print(f'  AP retention: {100*m_p:.2f}% +/- {100*sd_p:.2f}pp '
+          f'(95% CI {100*(m_p-ci_p):.2f}..{100*(m_p+ci_p):.2f}%)')
 
     # LaTeX table
     print('\n  --- LaTeX table ---')
-    print(r'  \begin{tabular}{lcccc}')
+    print(r'  \begin{tabular}{lcccccc}')
     print(r'    \toprule')
-    print(r'    Task & Prev & AUROC$_{R}$ & AUROC$_{S}$ & Retention \\')
+    print(r'    Code & Prev & AUROC$_{R}$ & AUROC$_{S}$ & AP$_{R}$ & AP$_{S}$ & Retention \\')
     print(r'    \midrule')
     for r in rows:
-        print(f'    {r["task"]:<20} & {r["prevalence"]:.3f} & '
+        code = r['code'].replace('code ', '')
+        print(f'    {code:<5} & {r["prevalence"]:.3f} & '
               f'{r["auc_real_mean"]:.4f} & {r["auc_syn_mean"]:.4f} & '
+              f'{r["ap_real_mean"]:.4f} & {r["ap_syn_mean"]:.4f} & '
               f'{100*r["retention_mean"]:.1f}\% \\\\')
     print(f'    \\textbf{{Mean}} & & {m_r:.4f} & {m_s:.4f} & '
+          f'{np.mean([r["ap_real_mean"] for r in rows]):.4f} & '
+          f'{np.mean([r["ap_syn_mean"] for r in rows]):.4f} & '
           f'{100*m_t:.1f}\% ({100*(m_t-ci_t):.1f}--{100*(m_t+ci_t):.1f}) \\\\')
     print(r'    \bottomrule')
     print(r'  \end{tabular}')
@@ -282,6 +305,10 @@ def main():
             'retention_sd_pct': float(100 * sd_t),
             'retention_ci95_lo_pct': float(100 * (m_t - ci_t)),
             'retention_ci95_hi_pct': float(100 * (m_t + ci_t)),
+            'ap_retention_mean_pct': float(100 * m_p),
+            'ap_retention_sd_pct': float(100 * sd_p),
+            'ap_retention_ci95_lo_pct': float(100 * (m_p - ci_p)),
+            'ap_retention_ci95_hi_pct': float(100 * (m_p + ci_p)),
         }
         os.makedirs(os.path.dirname(opt.out), exist_ok=True)
         with open(opt.out, 'w') as f:
