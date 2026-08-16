@@ -5,8 +5,9 @@ Repeats a TSTR protocol over N repetitions to report mean +/- SD (and 95% CI of
 the mean) for per-task AUROC and retention, instead of single point estimates.
 
 Two protocols, matching the dissertation tables exactly:
-  --protocol lightgbm   unconditional model: mimic4_data.npy (2083 cols), top-10
-                        codes (indices 0-9), synthetic = all_x_large.npy.
+  --protocol lightgbm   unconditional model: mimic4_data.npy (2083 cols), ten
+                        most prevalent codes (prevalence in (0.03, 0.97), by
+                        training prevalence), synthetic = all_x_large.npy.
                         LightGBM (n_estimators=200, max_depth=5, lr=0.1); each
                         repetition uses random_state=seed (model-seed variance)
                         plus a fresh bootstrap resample of the real test set
@@ -125,7 +126,7 @@ def main():
     # ---- build the task list ----
     if protocol == 'lightgbm':
         n_targets = min(10, n_code)
-        targets = list(range(n_targets))
+        targets = pick_targets(real_train, n_code, n_targets=n_targets)
         tasks = []
         for col in targets:
             code = codes[col] if codes else f'col_{col}'
